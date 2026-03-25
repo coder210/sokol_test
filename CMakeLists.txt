@@ -7,11 +7,6 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 # 源文件
 add_executable(triangle src/main.c src/sokol_app.h  src/sokol_gfx.h)
 
-# 可执行文件
-add_executable(triangle ${SOURCES})
-
-# 头文件路径（假设 sokol 头文件位于 third_party/sokol/）
-target_include_directories(triangle PRIVATE third_party/sokol)
 
 # 平台特定链接库和编译定义
 if(EMSCRIPTEN)
