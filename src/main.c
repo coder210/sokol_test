@@ -1,6 +1,5 @@
 #define SOKOL_IMPL
 //#define SOKOL_GLCORE
-#define SOKOL_GLCORE
 
 #include "sokol_app.h"
 #include "sokol_gfx.h"
