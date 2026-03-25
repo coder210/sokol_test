@@ -1,29 +1,24 @@
-name: Build
-
-on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-
 jobs:
-  # 原生平台构建（Windows, Linux, macOS）
   native-build:
     strategy:
-      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         include:
           - os: ubuntu-latest
             build_dir: build-linux
+            deps: "libgl1-mesa-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev"  # 添加依赖
           - os: windows-latest
             build_dir: build-windows
           - os: macos-latest
             build_dir: build-macos
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      # Linux 特有：安装 OpenGL 和 X11 开发库
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.deps }}
 
       - name: Configure CMake
         run: cmake -B ${{ matrix.build_dir }} -DCMAKE_BUILD_TYPE=Release
@@ -31,36 +26,10 @@ jobs:
       - name: Build
         run: cmake --build ${{ matrix.build_dir }} --config Release --parallel
 
-      - name: Upload artifact (optional)
+      # 上传构建产物
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: triangle-${{ matrix.os }}
-          path: ${{ matrix.build_dir }}/triangle*
-          if-no-files-found: ignore
-
-  # Emscripten 构建 (WebAssembly)
-  emscripten-build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Emscripten SDK
-        uses: mymindstorm/setup-emsdk@v14
-        with:
-          version: latest
-          actions-cache-folder: emsdk-cache
-
-      - name: Configure CMake with Emscripten toolchain
-        run: |
-          emcmake cmake -B build-wasm -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build
-        run: cmake --build build-wasm --parallel
-
-      - name: Upload artifact (optional)
-        uses: actions/upload-artifact@v4
-        with:
-          name: triangle-wasm
-          path: build-wasm/triangle.*
+          path: ${{ matrix.build_dir }}/triangle*   # Linux/macOS 生成 triangle，Windows 生成 triangle.exe
           if-no-files-found: ignore
