@@ -1,117 +1,66 @@
-name: Build and Deploy
+name: Build
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, master ]
 
 jobs:
-  # ========== 原生构建 ==========
-  build_native:
+  # 原生平台构建（Windows, Linux, macOS）
+  native-build:
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         include:
-          - os: windows-latest
-            artifact_name: triangle_win.exe
           - os: ubuntu-latest
-            artifact_name: triangle_linux
+            build_dir: build-linux
+          - os: windows-latest
+            build_dir: build-windows
           - os: macos-latest
-            artifact_name: triangle_macos
+            build_dir: build-macos
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      # Linux 安装依赖
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libx11-dev libgl1-mesa-dev
-
-      # 配置 CMake
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B ${{ matrix.build_dir }} -DCMAKE_BUILD_TYPE=Release
 
-      # 构建
       - name: Build
-        run: cmake --build build --config Release
+        run: cmake --build ${{ matrix.build_dir }} --config Release --parallel
 
-      # 上传原生程序
-      - name: Upload artifact (Windows)
-        if: runner.os == 'Windows'
+      - name: Upload artifact (optional)
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: build/Release/triangle.exe
+          name: triangle-${{ matrix.os }}
+          path: ${{ matrix.build_dir }}/triangle*
+          if-no-files-found: ignore
 
-      - name: Upload artifact (Linux/macOS)
-        if: runner.os != 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: build/triangle
-
-  # ========== WebAssembly 构建 ==========
-  build_web:
+  # Emscripten 构建 (WebAssembly)
+  emscripten-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Setup Emscripten
-        uses: emscripten-core/setup-emsdk@v3
+      - name: Setup Emscripten SDK
+        uses: mymindstorm/setup-emsdk@v14
         with:
           version: latest
           actions-cache-folder: emsdk-cache
 
-      - name: Configure CMake for Emscripten
-        run: emcmake cmake -B build_web -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build WebAssembly
-        run: cmake --build build_web --target triangle
-
-      - name: Prepare deployment
+      - name: Configure CMake with Emscripten toolchain
         run: |
-          mkdir -p deploy
-          cp build_web/triangle.* deploy/
-          # 若有自定义 shell.html 则一并复制
-          [ -f shell.html ] && cp shell.html deploy/
-          # 将生成的 html 重命名为 index.html（供 GitHub Pages 直接访问）
-          if [ -f deploy/triangle.html ]; then
-            mv deploy/triangle.html deploy/index.html
-          fi
+          emcmake cmake -B build-wasm -DCMAKE_BUILD_TYPE=Release
 
-      - name: Upload web artifacts
+      - name: Build
+        run: cmake --build build-wasm --parallel
+
+      - name: Upload artifact (optional)
         uses: actions/upload-artifact@v4
         with:
-          name: web_build
-          path: deploy/
-
-  # ========== 部署到 GitHub Pages ==========
-  deploy_pages:
-    needs: [build_native, build_web]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Download web artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: web_build
-          path: public
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: public
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          name: triangle-wasm
+          path: build-wasm/triangle.*
+          if-no-files-found: ignore
