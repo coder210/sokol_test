@@ -1,0 +1,130 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # 构建原生可执行文件（Windows、Linux、macOS）
+  build_native:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            backend: opengl
+            cmake_args: -DUSE_D3D11=OFF
+            artifact_name: sokol_triangle_win_opengl.exe
+          - os: windows-latest
+            backend: d3d11
+            cmake_args: -DUSE_D3D11=ON
+            artifact_name: sokol_triangle_win_d3d11.exe
+          - os: ubuntu-latest
+            backend: opengl
+            cmake_args: ""
+            artifact_name: sokol_triangle_linux
+          - os: macos-latest
+            backend: opengl
+            cmake_args: ""
+            artifact_name: sokol_triangle_macos
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build ${{ matrix.cmake_args }}
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Upload artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: build/Release/sokol_triangle.exe
+
+      - name: Upload artifact (Linux/macOS)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: build/sokol_triangle
+
+  # 构建 WebAssembly 版本
+  build_web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Emscripten
+        uses: emscripten-core/setup-emsdk@v3
+        with:
+          version: latest
+          actions-cache-folder: emsdk-cache
+
+      - name: Configure CMake for Emscripten
+        run: |
+          emcmake cmake -B build_web \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_D3D11=OFF  # Web 后端为 OpenGL
+
+      - name: Build WebAssembly
+        run: cmake --build build_web --target sokol_triangle
+
+      - name: List build output
+        run: ls -la build_web/
+
+      - name: Prepare deployment folder
+        run: |
+          mkdir -p deploy
+          cp build_web/sokol_triangle.* deploy/
+          # 如果有自定义的 shell.html，确保复制
+          # 如果有其他静态资源，一并复制
+          cp shell.html deploy/ 2>/dev/null || true
+          # 确保 index.html 存在（如果生成的是 sokol_triangle.html，重命名为 index.html）
+          if [ -f deploy/sokol_triangle.html ]; then
+            mv deploy/sokol_triangle.html deploy/index.html
+          fi
+
+      - name: Upload web artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: web_build
+          path: deploy/
+
+  # 部署到 GitHub Pages
+  deploy_pages:
+    needs: [build_native, build_web]  # 可选：确保所有构建完成后再部署 web
+    runs-on: ubuntu-latest
+    # 仅在推送到 main 分支时部署，避免 PR 部署
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Download web artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: web_build
+          path: public
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
