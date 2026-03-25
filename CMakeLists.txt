@@ -7,7 +7,6 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 # 源文件
 add_executable(triangle src/main.c src/sokol_app.h  src/sokol_gfx.h)
 
-
 # 平台特定链接库和编译定义
 if(EMSCRIPTEN)
     # WebAssembly 构建
