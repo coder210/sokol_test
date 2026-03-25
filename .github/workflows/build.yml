@@ -7,54 +7,77 @@ on:
     branches: [ main ]
 
 jobs:
-  # 构建原生可执行文件（Windows、Linux、macOS）
   build_native:
     strategy:
       matrix:
         include:
           - os: windows-latest
             backend: opengl
-            cmake_args: -DUSE_D3D11=OFF
-            artifact_name: sokol_triangle_win_opengl.exe
+            define: SOKOL_GLCORE
+            link_libs: "opengl32.lib user32.lib gdi32.lib"
+            artifact_name: triangle_win_opengl.exe
           - os: windows-latest
             backend: d3d11
-            cmake_args: -DUSE_D3D11=ON
-            artifact_name: sokol_triangle_win_d3d11.exe
+            define: SOKOL_D3D11
+            link_libs: "d3d11.lib dxgi.lib user32.lib gdi32.lib"
+            artifact_name: triangle_win_d3d11.exe
           - os: ubuntu-latest
             backend: opengl
-            cmake_args: ""
-            artifact_name: sokol_triangle_linux
+            define: SOKOL_GLCORE
+            link_libs: "-lGL -lX11 -lm -lpthread -ldl"
+            artifact_name: triangle_linux_opengl
           - os: macos-latest
             backend: opengl
-            cmake_args: ""
-            artifact_name: sokol_triangle_macos
+            define: SOKOL_GLCORE
+            link_libs: "-framework OpenGL -framework Cocoa -framework QuartzCore"
+            artifact_name: triangle_macos_opengl
 
     runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure CMake
-        run: cmake -B build ${{ matrix.cmake_args }}
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev libgl1-mesa-dev
 
-      - name: Build
-        run: cmake --build build --config Release
+      - name: Remove hardcoded backend defines
+        run: |
+          sed -i '/^#define SOKOL_GLCORE/d' main.c
+          sed -i '/^#define SOKOL_D3D11/d' main.c
+        shell: bash
+
+      - name: Build on Windows (MSVC)
+        if: runner.os == 'Windows'
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64 || call "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" x64
+          cl /I. /D${{ matrix.define }} main.c /Fe${{ matrix.artifact_name }} /link ${{ matrix.link_libs }}
+        shell: cmd
+
+      - name: Build on Linux
+        if: runner.os == 'Linux'
+        run: |
+          gcc -o ${{ matrix.artifact_name }} main.c -I. -D${{ matrix.define }} ${{ matrix.link_libs }}
+
+      - name: Build on macOS
+        if: runner.os == 'macOS'
+        run: |
+          clang -o ${{ matrix.artifact_name }} main.c -I. -D${{ matrix.define }} ${{ matrix.link_libs }}
 
       - name: Upload artifact (Windows)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: build/Release/sokol_triangle.exe
+          path: ${{ matrix.artifact_name }}
 
       - name: Upload artifact (Linux/macOS)
         if: runner.os != 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: build/sokol_triangle
+          path: ${{ matrix.artifact_name }}
 
-  # 构建 WebAssembly 版本
   build_web:
     runs-on: ubuntu-latest
     steps:
@@ -68,27 +91,19 @@ jobs:
 
       - name: Configure CMake for Emscripten
         run: |
-          emcmake cmake -B build_web \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DUSE_D3D11=OFF  # Web 后端为 OpenGL
+          emcmake cmake -B build_web -DCMAKE_BUILD_TYPE=Release
 
       - name: Build WebAssembly
         run: cmake --build build_web --target sokol_triangle
-
-      - name: List build output
-        run: ls -la build_web/
 
       - name: Prepare deployment folder
         run: |
           mkdir -p deploy
           cp build_web/sokol_triangle.* deploy/
-          # 如果有自定义的 shell.html，确保复制
-          # 如果有其他静态资源，一并复制
-          cp shell.html deploy/ 2>/dev/null || true
-          # 确保 index.html 存在（如果生成的是 sokol_triangle.html，重命名为 index.html）
-          if [ -f deploy/sokol_triangle.html ]; then
-            mv deploy/sokol_triangle.html deploy/index.html
-          fi
+          # 如果存在自定义 shell.html，则复制
+          [ -f shell.html ] && cp shell.html deploy/
+          # 重命名 index.html
+          [ -f deploy/sokol_triangle.html ] && mv deploy/sokol_triangle.html deploy/index.html
 
       - name: Upload web artifacts
         uses: actions/upload-artifact@v4
@@ -96,12 +111,10 @@ jobs:
           name: web_build
           path: deploy/
 
-  # 部署到 GitHub Pages
   deploy_pages:
-    needs: [build_native, build_web]  # 可选：确保所有构建完成后再部署 web
-    runs-on: ubuntu-latest
-    # 仅在推送到 main 分支时部署，避免 PR 部署
+    needs: [build_native, build_web]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
     permissions:
       contents: write
       pages: write
@@ -109,7 +122,6 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-
     steps:
       - name: Download web artifacts
         uses: actions/download-artifact@v4
