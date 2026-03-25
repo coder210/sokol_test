@@ -50,10 +50,7 @@ static const char* fs_src =
 #endif // SOKOL_GLCORE
 
 
-
 #ifdef SOKOL_D3D11
-
-
 /* 顶点着色器 HLSL */
 static const char* vs_src =
 "struct VS_IN {\n"
